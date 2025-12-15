@@ -18,7 +18,9 @@ export class HikvisionMachineService implements AttendanceMachineStrategy {
   constructor(private readonly configService: ConfigService) {
     // this.cloudUrl = "https://app-api.decentgroups.com/api";
     // this.cloudUrl = "http://localhost:5000/api";
-    this.cloudUrl = "https://na-api.4loopes.com/api";
+    // this.cloudUrl = "https://bricks-api.4loopes.com/api";
+    this.cloudUrl = "https://lclassic-api.4loopes.com/api";
+    // this.cloudUrl = "https://na-api.4loopes.com/api";
   }
 
   async getHrMachineIPs() {
@@ -32,7 +34,7 @@ export class HikvisionMachineService implements AttendanceMachineStrategy {
         `http://${ip}/ISAPI/System/deviceInfo`,
         { httpsAgent, timeout }
       );
-      console.log(response.data)
+      
       const parsed = await parseStringPromise(response.data);
       return !!parsed?.DeviceInfo?.deviceName;
     } catch (error) {
@@ -68,7 +70,9 @@ export class HikvisionMachineService implements AttendanceMachineStrategy {
     for (let device of devices) {
       const deviceInfoRes = await axios.get(`${this.cloudUrl}/hr/device/code?code=${device.code}`);
       const [device_info] = deviceInfoRes.data;
+      console.log(device_info)
       param['ip'] = device_info.ip;
+      
       const isConnected = await this.checkHikvisionConnection(param['ip']);
       if (!isConnected) {
         unreachableDevices.push({ deviceName: device.name, ip: param['ip'], error: 'Device not reachable' });
@@ -108,8 +112,8 @@ export class HikvisionMachineService implements AttendanceMachineStrategy {
                 gender: "male",
                 Valid: {
                   enable: true,
-                  beginTime: `${startDate}T23:59:59`,
-                  endTime: `${endDate}T00:00:00`,
+                  beginTime: `${startDate}T00:00:00+03:00`,
+                  endTime: `${endDate}T23:59:59+03:00`,
                   timeType: "local"
                 },
                 doorRight: "1",
@@ -257,15 +261,17 @@ export class HikvisionMachineService implements AttendanceMachineStrategy {
 
   async getLogs() {
     const machines = await this.getHrMachineIPs();
+   
     const final_result = [];
     const unreachableDevices = [];
   
     for (let machine of machines) {
       try {
-        
+        console.log(this.cloudUrl)
         const lastTimeStamp = await axios.get(`${this.cloudUrl}/hr/sync/attendance/last-time?machineId=${machine.code}`);
         const time_stamp = lastTimeStamp?.data?.length ? this.sqlDatetimeToUnix(lastTimeStamp.data[0]?.timestamp) : null;
         // 1. Convert timestamp -> Hikvision datetime format
+        //2025-11-11T11:22:13.000Z
         const last_time_gmt3 = time_stamp
         ? await this.formatUnixToGMT3(Number(time_stamp)): null;
 
@@ -337,6 +343,7 @@ export class HikvisionMachineService implements AttendanceMachineStrategy {
           }
         }
       } catch (err) {
+        console.log(err)
         unreachableDevices.push(machine.ip);
         console.error(`Error fetching logs from ${machine.ip}:`, err.message);
       }
@@ -361,5 +368,19 @@ export class HikvisionMachineService implements AttendanceMachineStrategy {
       .format('YYYY-MM-DDTHH:mm:ss[+03:00]');
   }
   
-
+  async setMachineTime(ip: string): Promise<any> {
+    const xmlPayload = `<Time version="2.0" xmlns="http://www.isapi.org/ver20/XMLSchema"><timeMode>NTP</timeMode><NTPServer>pool.ntp.org</NTPServer><timeZone>CST-3:00:00D001</timeZone></Time>`;
+    try {
+      const response = await client.put(
+        `http://${ip}/ISAPI/System/time`,
+        xmlPayload,
+        { headers: { 'Content-Type': 'application/xml' }, httpsAgent }
+      );
+      console.log(`Time synchronization successful for ${ip}:`, response.data);
+      return response.data;
+    } catch (error) {
+      console.error(`Failed to set machine time for ${ip}:`, error.message);
+      throw new HttpException(`Failed to set machine time for ${ip}: ${error.message}`, HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+  }
 }

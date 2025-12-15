@@ -46,5 +46,6 @@ export class GetMachineLogsDto {
 
 export class EmployeeCodeDto {
   @IsString()
+  @IsOptional()
   employeeCode?: string;
 } 

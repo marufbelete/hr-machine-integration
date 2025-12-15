@@ -16,13 +16,20 @@ export class HrMachineService {
     return strategy.addUser(param);
   }
 
-  async fetchBulkUsers(employeeCode:EmployeeCodeDto): Promise<AddUserToMachineDto[]> {
-    // const API_BASE_URL = "https://app-api.decentgroups.com/api";
-    const API_BASE_URL = "https://na-api.4loopes.com/api";
+  async fetchBulkUsers(employeeCode: EmployeeCodeDto): Promise<AddUserToMachineDto[]> {
+    console.log(employeeCode);
     // const API_BASE_URL = "http://localhost:5000/api";
-    const res = await axios.get(`${API_BASE_URL}/hr/bulk_user?employeeCode=${employeeCode.employeeCode}`);
+    // const API_BASE_URL = "https://lclassic-api.4loopes.com/api";
+    const API_BASE_URL = "https://app-api.nabusinessventures.com/api";
+    // const API_BASE_URL = "https://bricks-api.4loopes.com/api";
+    
+    const params = employeeCode?.employeeCode?.trim() 
+        ? { employeeCode: employeeCode.employeeCode } 
+        : {};
+    
+    const res = await axios.get(`${API_BASE_URL}/hr/bulk_user`, { params });
     return res.data;
-  }
+}
 
   async addUsersBulk(users: AddUserToMachineDto[], machineType: string) {
     const strategy = this.strategyFactory.getStrategy(machineType);
@@ -41,6 +48,7 @@ export class HrMachineService {
 
   async fetchAndAddUsersBulk(params: EmployeeCodeDto, machineType: string) {
     const users = await this.fetchBulkUsers(params);
+    console.log(users)
     const strategy = this.strategyFactory.getStrategy(machineType);
     const results = [];
     for (const param of users!) {
@@ -69,4 +77,5 @@ export class HrMachineService {
     const strategy = this.strategyFactory.getStrategy(machineType);
     return strategy.getLogs();
   }
+  
 } 
