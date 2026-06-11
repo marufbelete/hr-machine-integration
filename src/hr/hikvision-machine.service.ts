@@ -14,13 +14,10 @@ const httpsAgent = new https.Agent({ rejectUnauthorized: false });
 @Injectable()
 export class HikvisionMachineService implements AttendanceMachineStrategy {
   
-  private readonly cloudUrl: string;
+  private get cloudUrl(): string {
+    return this.configService.get<string>('CLOUD_URL');
+  }
   constructor(private readonly configService: ConfigService) {
-    // this.cloudUrl = "https://app-api.decentgroups.com/api";
-    // this.cloudUrl = "http://localhost:5000/api";
-    // this.cloudUrl = "https://bricks-api.4loopes.com/api";
-    this.cloudUrl = "https://lclassic-api.4loopes.com/api";
-    // this.cloudUrl = "https://na-api.4loopes.com/api";
   }
 
   async getHrMachineIPs() {
@@ -70,7 +67,6 @@ export class HikvisionMachineService implements AttendanceMachineStrategy {
     for (let device of devices) {
       const deviceInfoRes = await axios.get(`${this.cloudUrl}/hr/device/code?code=${device.code}`);
       const [device_info] = deviceInfoRes.data;
-      console.log(device_info)
       param['ip'] = device_info.ip;
       
       const isConnected = await this.checkHikvisionConnection(param['ip']);
@@ -87,20 +83,6 @@ export class HikvisionMachineService implements AttendanceMachineStrategy {
     const results = [];
     for (let device of reachableDevices) {
       try {
-        console.log( {
-          employeeNo: this.sanitizeIdentification(identification),
-          name,
-          userType: "normal",
-          gender: "male",
-          Valid: {
-            enable: true,
-            beginTime: startDate,
-            endTime: endDate,
-            timeType: "local"
-          },
-          doorRight: "1",
-          RightPlan: [{ doorNo: 1, planTemplateNo: "1" }]
-        })
         const result = await this.executeWithConnectionCheck(param['ip'], async () => {
           const response = await client.post(
             `http://${param['ip']}/ISAPI/AccessControl/UserInfo/Record?format=json`,

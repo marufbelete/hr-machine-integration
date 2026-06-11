@@ -18,10 +18,7 @@ export class HrMachineService {
 
   async fetchBulkUsers(employeeCode: EmployeeCodeDto): Promise<AddUserToMachineDto[]> {
     console.log(employeeCode);
-    // const API_BASE_URL = "http://localhost:5000/api";
-    // const API_BASE_URL = "https://lclassic-api.4loopes.com/api";
-    const API_BASE_URL = "https://app-api.nabusinessventures.com/api";
-    // const API_BASE_URL = "https://bricks-api.4loopes.com/api";
+    const API_BASE_URL = this.configService.get<string>('CLOUD_URL');
     
     const params = employeeCode?.employeeCode?.trim() 
         ? { employeeCode: employeeCode.employeeCode } 

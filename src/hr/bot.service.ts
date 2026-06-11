@@ -12,11 +12,14 @@ const jobRegistry = new Map();
 export class BotService implements OnApplicationBootstrap {
   private isCloudAttendanceJobRunning = false;
   private isCloudUserSyncJobRunning = false;
-  private readonly machineType : string = "DAHUA";
-  // private readonly machineType = 'HIKVISION';
-  private readonly CLOUD_URL="https://app-api.nabusinessventures.com/api";
-  // private readonly CLOUD_URL="https://lclassic-api.4loopes.com/api";
-  // private readonly CLOUD_URL="http://localhost:5000/api";
+
+  private get machineType(): string {
+    return this.configService.get<string>('MACHINE_TYPE') || 'HIKVISION';
+  }
+
+  private get CLOUD_URL(): string {
+    return this.configService.get<string>('CLOUD_URL') || 'https://liyukurit-api.4loop.tech/api';
+  }
 
   constructor(
     private readonly hrMachineService: HrMachineService,
@@ -82,33 +85,36 @@ export class BotService implements OnApplicationBootstrap {
         try { 
           const logs = await this.hrMachineService.getMachineLogs(this.machineType);
           if (!logs?.length) return;
-          for (const log of logs) {
-            try {
-              if (log?.UserID && log?.Status && log?.Status!='undefined') {
-                const payload = {
-                  code: '',
-                  identification: log?.UserID,
-                  machineId: log?.machineId,
-                  timestamp: log.CreateTime,
-                  isSynchronized: 0,
-                  remark: log?.URL,
-                };
 
-                await axios.request({
-                  method: 'POST',
-                  url: `${this.CLOUD_URL}/hr/sync/attendance`,
-                  data: payload,
-                  headers: {
-                    'Content-Type': 'application/json',
-                    'X-From-Sync': 'true',
-                  },
-                  validateStatus: (status) => status >= 200 && status < 300,
-                });
-              }
-              // add to sync table if needed
+          const payloads = [];
+          for (const log of logs) {
+            if (log?.UserID) {
+              payloads.push({
+                code: '',
+                identification: log.UserID,
+                machineId: log.machineId,
+                timestamp: log.CreateTime,
+                isSynchronized: 0,
+                remark: log.URL || '',
+              });
+            }
+          }
+
+          if (payloads.length > 0) {
+            try {
+              await axios.request({
+                method: 'POST',
+                url: `${this.CLOUD_URL}/hr/sync/attendance`,
+                data: payloads,
+                headers: {
+                  'Content-Type': 'application/json',
+                  'X-From-Sync': 'true',
+                },
+                validateStatus: (status) => status >= 200 && status < 300,
+              });
+              console.log(`Successfully synced ${payloads.length} attendance logs to cloud.`);
             } catch (error) {
-              console.error(`Error processing attendance outer log ${log.UserID}:`, error);
-              break;
+              console.error('Error sending attendance logs array to cloud:', error?.response?.data || error.message);
             }
           }
         } catch (error) {
@@ -166,19 +172,16 @@ export class BotService implements OnApplicationBootstrap {
         if (!syncData.data || !syncData.data.length) {
           continue;
         }
-  console.log(syncData.data)
-  console.log('syncData.data')
+
         for (const syn of syncData.data) {
           const payloadData = JSON.parse(syn.payload);
           try {
             const machineType = this.machineType; // Use user's machineType or default
             const action = syn.method;
-            const payload={userId:syn.unique_code,name:`${payloadData?.firstName} ${payloadData?.lastName || ' '} ${payloadData?.lastName || ' '}  `,
+            const payload={userId:syn.unique_code,name:`${payloadData?.firstName} ${payloadData?.middleName || ' '} ${payloadData?.lastName || ' '}  `,
             identification:syn.unique_code,startDate:'2025-10-10', endDate:'2035-10-10', devices: [{name:"Device X",code:syn.branch}]
-            }
-            console.log(payload)
-            console.log(action)
-            console.log(machineType)
+          }
+
             switch (action) {
               case 'POST':
                 await this.hrMachineService.addUserToMachine(payload, machineType);
@@ -197,15 +200,22 @@ export class BotService implements OnApplicationBootstrap {
             }
   
             // Optionally, send a confirmation back to the cloud API
-            await axios.put(`${this.CLOUD_URL}/sync/metadata`, { code:payload.userId,metadata:"Hr Completed" }, {
+            await axios.put(`${this.CLOUD_URL}/sync/metadata`, { code:payload.userId,branch:device.code,metadata:"Hr Completed",attempts:true }, {
               headers: {
                 'X-From-Sync': 'true',
               },
             });
   
           } catch (error) {
-            console.log(error)
-            console.log('in hereerror')
+            // if (syn.method === 'POST') {
+            //   try {
+            //     console.log(`Rollback: Deleting user ${syn.unique_code} from machine due to sync failure.`);
+            //     await this.hrMachineService.deleteUserFromMachine(syn.unique_code, this.machineType);
+            //   } catch (rollbackError) {
+            //     console.error('Critical: Failed to rollback user from machine', rollbackError);
+            //   }
+            // }
+
             await axios.put(`${this.CLOUD_URL}/sync`,{
               code: syn.id,
               error: JSON.stringify(error?.response?.message || 'Unknown error')
@@ -225,6 +235,7 @@ export class BotService implements OnApplicationBootstrap {
       this.isCloudUserSyncJobRunning = false;
     }
   }
+  
 //end
   private async syncHikvisionMachineTimeOnStartup() {
     try {

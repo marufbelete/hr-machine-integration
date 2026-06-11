@@ -10,15 +10,13 @@ const ZKT_PORT = 8090; // Use the same port for all ZKT devices
 export class ZktMachineService implements AttendanceMachineStrategy {
   private readonly username: string;
   private readonly password: string;
-  private readonly cloudUrl: string;
+  private get cloudUrl(): string {
+    return this.configService.get<string>('CLOUD_URL');
+  }
 
   constructor(private readonly configService: ConfigService) {
     this.username = this.configService.get<string>('ZKT_USERNAME') || '';
     this.password = this.configService.get<string>('ZKT_PASSWORD') || '';
-    // this.cloudUrl = "https://na-api.4loopes.com/api";
-    // this.cloudUrl = "http://localhost:5000/api";
-    // this.cloudUrl = "https://bricks-api.4loopes.com/api";
-    this.cloudUrl = "https://lclassic-api.4loopes.com/api";
   }
 
   private async getAuthToken(baseUrl: string): Promise<string> {

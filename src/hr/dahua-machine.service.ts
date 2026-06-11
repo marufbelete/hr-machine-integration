@@ -11,14 +11,11 @@ const httpsAgent = new https.Agent({ rejectUnauthorized: false });
 
 @Injectable()
 export class DahuaMachineService implements AttendanceMachineStrategy {
-  private readonly cloudUrl: string;
+  private get cloudUrl(): string {
+    return this.configService.get<string>('CLOUD_URL');
+  }
 
   constructor(private readonly configService: ConfigService) {
-    // this.cloudUrl = "https://app-api.decentgroups.com/api";
-    // this.cloudUrl = "http://localhost:5000/api";
-    // this.cloudUrl = "https://bricks-api.4loopes.com/api";
-    this.cloudUrl = "https://app-api.nabusinessventures.com/api";
-    // this.cloudUrl = "https://na-api.4loopes.com/api";
   }
 
   async getHrMachineIPs() {

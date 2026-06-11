@@ -6,8 +6,9 @@ import axios from "../http_client";
 
 @Controller('hr')
 export class HrMachineController {
-  // private readonly machineType = 'HIKVISION';
-  private readonly machineType = "DAHUA";
+  private get machineType(): string {
+    return this.configService.get<string>('MACHINE_TYPE');
+  }
   constructor(
     private readonly hrMachineService: HrMachineService,
     private readonly configService: ConfigService,
