@@ -1,3 +1,11 @@
+import * as dotenv from 'dotenv';
+import * as path from 'path';
+
+// __dirname inside pkg resolves to the snapshot path (e.g. /snapshot/hr/dist/)
+// __dirname in normal node run resolves to the real dist/ folder
+// Either way, '../.env' correctly locates the .env file (bundled asset or project root)
+dotenv.config({ path: path.join(__dirname, '../.env') });
+
 import { ClassSerializerInterceptor, ValidationPipe } from "@nestjs/common";
 import { NestFactory, Reflector } from "@nestjs/core";
 import { AppModule } from "./app.module";

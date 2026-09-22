@@ -3,6 +3,7 @@ import { AttendanceMachineStrategy } from './machine-strategy.interface';
 import { AddUserToMachineDto, UpdateUserOnMachineDto, DeleteUserFromMachineDto, GetMachineLogsDto } from './dtos/hr-machine.dto';
 import axios from "../http_client";
 import { ConfigService } from '@nestjs/config';
+import { CloudAttendanceService } from './cloud-attendance.service';
 
 const ZKT_PORT = 8090; // Use the same port for all ZKT devices
 
@@ -14,7 +15,10 @@ export class ZktMachineService implements AttendanceMachineStrategy {
     return this.configService.get<string>('CLOUD_URL');
   }
 
-  constructor(private readonly configService: ConfigService) {
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly cloudAttendanceService: CloudAttendanceService,
+  ) {
     this.username = this.configService.get<string>('ZKT_USERNAME') || '';
     this.password = this.configService.get<string>('ZKT_PASSWORD') || '';
   }
@@ -199,8 +203,7 @@ export class ZktMachineService implements AttendanceMachineStrategy {
     const allLogs = [];
     for (const device of deviceInfos) {
 
-      const lastTimeStamp = await axios.get(`${this.cloudUrl}/hr/sync/attendance/last-time?machineId=${device.code}`);
-      const time_stamp = lastTimeStamp?.data?.length ? this.sqlDatetimeToUnix(lastTimeStamp.data[0]?.timestamp) : null;
+      const time_stamp = await this.cloudAttendanceService.getLastAttendanceUnix(device.code);
     
       const baseUrl = `http://${device.ip}:${ZKT_PORT}`;
       const token = await this.getAuthToken(baseUrl);

@@ -5,6 +5,7 @@ import { AddUserToMachineDto, UpdateUserOnMachineDto, DeleteUserFromMachineDto, 
 import axios from "../http_client";
 import axiosDigest from 'axios-digest';
 import * as https from 'https';
+import { CloudAttendanceService } from './cloud-attendance.service';
 
 const client = new axiosDigest('admin', 'P@ssw0rd');
 const httpsAgent = new https.Agent({ rejectUnauthorized: false });
@@ -15,7 +16,10 @@ export class DahuaMachineService implements AttendanceMachineStrategy {
     return this.configService.get<string>('CLOUD_URL');
   }
 
-  constructor(private readonly configService: ConfigService) {
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly cloudAttendanceService: CloudAttendanceService,
+  ) {
   }
 
   async getHrMachineIPs() {
@@ -27,11 +31,25 @@ export class DahuaMachineService implements AttendanceMachineStrategy {
     try {
       await client.get(
         `http://${ip}/cgi-bin/global.cgi?action=getCurrentTime`,
-        { httpsAgent }
+        { httpsAgent, timeout }
       );
       return true;
     } catch (error) {
+      console.warn(`[Dahua] Connection check failed for ${ip}:`, error?.message || error);
       return false;
+    }
+  }
+
+  async getDahuaCurrentTime(ip: string, timeout = 5000): Promise<string | null> {
+    try {
+      const res = await client.get(
+        `http://${ip}/cgi-bin/global.cgi?action=getCurrentTime`,
+        { httpsAgent, timeout }
+      );
+      const match = res.data?.match(/currentTime=(.+)/);
+      return match ? match[1].trim() : res.data?.trim();
+    } catch (error) {
+      return null;
     }
   }
 
@@ -41,6 +59,7 @@ export class DahuaMachineService implements AttendanceMachineStrategy {
     const deviceInfo = ips.find(e => e.ip === ip);
     const deviceName = deviceInfo ? deviceInfo.name : ip;
     if (!isConnected) {
+      console.warn(`[Dahua] Device ${deviceName} (${ip}) is NOT reachable for operation '${operationName}'`);
       if (throwError) {
         throw new HttpException(`Dahua device at ${deviceName} is not reachable. Cannot execute ${operationName}`, HttpStatus.BAD_GATEWAY);
       } else {
@@ -50,6 +69,7 @@ export class DahuaMachineService implements AttendanceMachineStrategy {
     try {
       return await operation();
     } catch (error) {
+      console.error(`[Dahua] Failed to execute ${operationName} on ${deviceName} (${ip}):`, error?.message || error);
       if (throwError) throw error;
       return null;
     }
@@ -258,25 +278,59 @@ export class DahuaMachineService implements AttendanceMachineStrategy {
 
   async getLogs() {
     const machines = await this.getHrMachineIPs();
+    console.log(`\n=================== [Dahua] Starting Attendance Fetch ===================`);
+    console.log(`[Dahua] Found ${machines?.length || 0} Dahua machine(s) in configuration.`);
     const final_result = [];
     const unreachableDevices = [];
+
     for (let machine of machines) {
-      const lastTimeStamp = await axios.get(`${this.cloudUrl}/hr/sync/attendance/last-time?machineId=${machine.code}`);
-      const time_stamp = lastTimeStamp?.data?.length ? this.sqlDatetimeToUnix(lastTimeStamp.data[0]?.timestamp) : null;
-    
+      const machineName = machine.name || machine.code || machine.ip;
+      console.log(`\n--- [Dahua] Machine: ${machineName} (IP: ${machine.ip}, Code: ${machine.code}) ---`);
+
+      const time_stamp = await this.cloudAttendanceService.getLastAttendanceUnix(machine.code);
+      const timeFormatted = time_stamp 
+        ? `${time_stamp} (ISO: ${new Date(time_stamp * 1000).toISOString()})` 
+        : 'None (fetching all available logs)';
+      console.log(`[Dahua] Filter StartTime from DB: ${timeFormatted}`);
+
+      const deviceTime = await this.getDahuaCurrentTime(machine.ip);
+      if (deviceTime) {
+        console.log(`[Dahua] Device internal clock: ${deviceTime}`);
+      }
+
       const result = await this.executeWithConnectionCheck(machine.ip, async () => {
         let log_url = `http://${machine.ip}/cgi-bin/recordFinder.cgi?action=find&name=AccessControlCardRec`;
         if (time_stamp) log_url += `&StartTime=${time_stamp}`;
+        console.log(`[Dahua] Request URL: ${log_url}`);
+
         const response = await client.get(log_url, { httpsAgent });
-        const parsedResult = this.parseDahuaResponse(response.data);
+        const rawData = response.data || '';
+        const parsedResult = this.parseDahuaResponse(rawData);
+
+        console.log(`[Dahua] ✅ Found ${parsedResult.length} attendance record(s) from machine ${machineName} (${machine.ip}).`);
+
+        if (parsedResult.length > 0) {
+          const sampleCount = Math.min(2, parsedResult.length);
+          console.log(`[Dahua] 📋 Sample data (first ${sampleCount} of ${parsedResult.length} records):`);
+          console.log(JSON.stringify(parsedResult.slice(0, sampleCount), null, 2));
+        } else {
+          const rawPreview = typeof rawData === 'string' && rawData.length > 150 ? rawData.substring(0, 150) + '...' : rawData;
+          console.log(`[Dahua] ℹ️ Zero records parsed. Raw response preview: "${typeof rawPreview === 'string' ? rawPreview.replace(/\r?\n/g, ' ') : rawPreview}"`);
+        }
+
         return parsedResult.map(record => ({ ...record, deviceIP: machine.ip }));
       }, 'getDahuaAccessLogs', false);
+
       if (result) {
         final_result.push(...result.map(e => ({ ...e, machineId: machine.code })));
       } else {
         unreachableDevices.push(machine.ip);
+        console.warn(`[Dahua] ❌ Machine ${machineName} (${machine.ip}) was unreachable or failed to return logs.`);
       }
     }
+
+    console.log(`\n=================== [Dahua] Finished Attendance Fetch ===================`);
+    console.log(`[Dahua] Summary: ${final_result.length} total record(s) fetched across ${machines?.length || 0} machine(s). Unreachable machines: ${unreachableDevices.length}\n`);
     return final_result;
   }
 
@@ -284,17 +338,18 @@ export class DahuaMachineService implements AttendanceMachineStrategy {
     return Math.floor((new Date(dt).getTime() / 1000) + 1);
   }
 
-
   parseDahuaResponse(text: string) {
-    const lines = text.split('\r\n');
+    if (!text || typeof text !== 'string') return [];
+    const lines = text.split(/\r?\n/);
     const records = [];
     lines.forEach(line => {
       if (line.startsWith('records[')) {
-        const match = line.match(/records\[(\d+)\]\.(.+)=(.+)/);
+        const match = line.match(/records\[(\d+)\]\.([^=]+)=(.*)/);
         if (match) {
           const [_, index, key, value] = match;
-          if (!records[index]) records[index] = {};
-          records[index][key] = value;
+          const idx = parseInt(index, 10);
+          if (!records[idx]) records[idx] = {};
+          records[idx][key.trim()] = value.trim();
         }
       }
     });

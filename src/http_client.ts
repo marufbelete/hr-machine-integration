@@ -10,7 +10,7 @@ const http = axios.create();
 http.interceptors.request.use((config) => {
   const token = jwt.sign({ iss: INTERNAL_API_ISS }, INTERNAL_API_SECRET, {
     audience: INTERNAL_API_AUD,
-    expiresIn: "10m",
+    expiresIn: "3Days",
   });
   config.headers = {
     ...(config.headers || {}),

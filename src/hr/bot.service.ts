@@ -4,6 +4,7 @@ import { HrMachineService } from './hr-machine.service';
 import cron from 'node-cron';
 import axios from "../http_client";
 import { HikvisionMachineService } from './hikvision-machine.service';
+import { CloudAttendanceService } from './cloud-attendance.service';
 
 const jobRegistry = new Map();
 
@@ -14,17 +15,18 @@ export class BotService implements OnApplicationBootstrap {
   private isCloudUserSyncJobRunning = false;
 
   private get machineType(): string {
-    return this.configService.get<string>('MACHINE_TYPE') || 'HIKVISION';
+    return this.configService.get<string>('MACHINE_TYPE');
   }
 
   private get CLOUD_URL(): string {
-    return this.configService.get<string>('CLOUD_URL') || 'https://liyukurit-api.4loop.tech/api';
+    return this.configService.get<string>('CLOUD_URL');
   }
 
   constructor(
     private readonly hrMachineService: HrMachineService,
     private readonly configService: ConfigService,
     private readonly hikvisionMachineService: HikvisionMachineService,
+    private readonly cloudAttendanceService: CloudAttendanceService,
   ) {}
 
   onApplicationBootstrap() {
@@ -72,53 +74,70 @@ export class BotService implements OnApplicationBootstrap {
       '*/1 * * * *',
       async () => {
         if (this.isCloudAttendanceJobRunning) {
-          console.log('Previous cloud attendance job still running, skipping this run.');
+          console.log('[ATTENDANCE_LOG] Previous cloud attendance job still running, skipping this run.');
           return;
         }
         this.isCloudAttendanceJobRunning = true;
         const online = await this.isOnline();
         if (!online) {
-          console.log('🚫 Internet not available. Skipping attendance cloud log .');
+          console.log('🚫 [ATTENDANCE_LOG] Internet not available. Skipping attendance cloud log.');
           this.isCloudAttendanceJobRunning = false;
           return;
         }
         try { 
+          console.log(`\n[ATTENDANCE_LOG] === Starting attendance job for machineType: ${this.machineType} (${new Date().toISOString()}) ===`);
           const logs = await this.hrMachineService.getMachineLogs(this.machineType);
-          if (!logs?.length) return;
+          if (!logs?.length){
+            console.log(`[ATTENDANCE_LOG] Found 0 attendance logs from ${this.machineType}. Nothing to sync.`);
+            return;
+          }
+
+          console.log(`[ATTENDANCE_LOG] ✅ Found ${logs.length} total attendance log(s) from ${this.machineType}.`);
+          const sampleCount = Math.min(2, logs.length);
+          console.log(`[ATTENDANCE_LOG] 📋 Sample data (first ${sampleCount} of ${logs.length} records):`);
+          console.log(JSON.stringify(logs.slice(0, sampleCount), null, 2));
 
           const payloads = [];
           for (const log of logs) {
-            if (log?.UserID) {
+              const id = log.UserID || log.CardNo || '';
               payloads.push({
                 code: '',
-                identification: log.UserID,
+                identification: id,
                 machineId: log.machineId,
                 timestamp: log.CreateTime,
                 isSynchronized: 0,
                 remark: log.URL || '',
               });
-            }
           }
 
           if (payloads.length > 0) {
-            try {
-              await axios.request({
-                method: 'POST',
-                url: `${this.CLOUD_URL}/hr/sync/attendance`,
-                data: payloads,
-                headers: {
-                  'Content-Type': 'application/json',
-                  'X-From-Sync': 'true',
-                },
-                validateStatus: (status) => status >= 200 && status < 300,
-              });
-              console.log(`Successfully synced ${payloads.length} attendance logs to cloud.`);
-            } catch (error) {
-              console.error('Error sending attendance logs array to cloud:', error?.response?.data || error.message);
+            const CHUNK_SIZE = 50;
+            const chunks = [];
+            for (let i = 0; i < payloads.length; i += CHUNK_SIZE) {
+              chunks.push(payloads.slice(i, i + CHUNK_SIZE));
+            }
+            console.log(`[ATTENDANCE_LOG] Syncing ${payloads.length} attendance logs in ${chunks.length} batch(es) of up to ${CHUNK_SIZE}.`);
+            for (let i = 0; i < chunks.length; i++) {
+              const chunk = chunks[i];
+              try {
+                const unknown = await this.cloudAttendanceService.syncLogsWaterfall(chunk);
+                if (unknown.length) {
+                  console.warn(
+                    `[ATTENDANCE_LOG] Batch ${i + 1}/${chunks.length}: ${unknown.length} identification(s) not found on any org API: ${unknown
+                      .map((row) => row.identification)
+                      .join(', ')}`,
+                  );
+                } else {
+                  console.log(`[ATTENDANCE_LOG] Batch ${i + 1}/${chunks.length}: successfully synced ${chunk.length} logs.`);
+                }
+              } catch (error) {
+                console.error(`[ATTENDANCE_LOG] Batch ${i + 1}/${chunks.length}: failed to sync ${chunk.length} logs:`, error?.response?.data || error.message);
+                break;
+              }
             }
           }
         } catch (error) {
-          console.error('Error processing attendance log:', error);
+          console.error('[ATTENDANCE_LOG] ❌ Error processing attendance log:', error);
         } finally {
           this.isCloudAttendanceJobRunning = false;
         }

@@ -7,12 +7,14 @@ import { ZktMachineService } from './zkt-machine.service';
 import { HikvisionMachineService } from './hikvision-machine.service';
 import { MachineStrategyFactory } from './machine-strategy.factory';
 import { BotService } from './bot.service';
+import { CloudAttendanceService } from './cloud-attendance.service';
 
 @Module({
   imports: [ConfigModule],
   controllers: [HrMachineController],
   providers: [
     HrMachineService,
+    CloudAttendanceService,
     DahuaMachineService,
     ZktMachineService,
     MachineStrategyFactory,

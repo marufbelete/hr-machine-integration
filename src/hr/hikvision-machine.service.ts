@@ -7,6 +7,7 @@ import axios from "../http_client";
 import axiosDigest from 'axios-digest';
 import * as https from 'https';
 import { parseStringPromise } from 'xml2js';
+import { CloudAttendanceService } from './cloud-attendance.service';
 
 const client = new axiosDigest('admin', 'Ela@12345');
 const httpsAgent = new https.Agent({ rejectUnauthorized: false });
@@ -17,7 +18,10 @@ export class HikvisionMachineService implements AttendanceMachineStrategy {
   private get cloudUrl(): string {
     return this.configService.get<string>('CLOUD_URL');
   }
-  constructor(private readonly configService: ConfigService) {
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly cloudAttendanceService: CloudAttendanceService,
+  ) {
   }
 
   async getHrMachineIPs() {
@@ -250,8 +254,7 @@ export class HikvisionMachineService implements AttendanceMachineStrategy {
     for (let machine of machines) {
       try {
         console.log(this.cloudUrl)
-        const lastTimeStamp = await axios.get(`${this.cloudUrl}/hr/sync/attendance/last-time?machineId=${machine.code}`);
-        const time_stamp = lastTimeStamp?.data?.length ? this.sqlDatetimeToUnix(lastTimeStamp.data[0]?.timestamp) : null;
+        const time_stamp = await this.cloudAttendanceService.getLastAttendanceUnix(machine.code);
         // 1. Convert timestamp -> Hikvision datetime format
         //2025-11-11T11:22:13.000Z
         const last_time_gmt3 = time_stamp
