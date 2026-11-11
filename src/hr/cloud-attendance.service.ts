@@ -87,6 +87,7 @@ export class CloudAttendanceService {
       try {
         const lastTimeStamp = await axios.get(
           `${url}/hr/sync/attendance/last-time?machineId=${machineId}`,
+          { timeout: 5000 },
         );
         const raw = lastTimeStamp?.data?.[0]?.timestamp;
         if (!raw) {

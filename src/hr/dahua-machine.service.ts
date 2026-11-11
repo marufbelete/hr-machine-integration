@@ -188,7 +188,10 @@ export class DahuaMachineService implements AttendanceMachineStrategy {
         deviceRecNoMap[deviceCode] = recNo;
       }
     });
-    const userDeviceCodes = identification.map(e => e?.remark?.split('/')[1]);
+    const userDeviceCodes = identification
+      .map(e => e?.remark?.split('/')[1])
+      .filter(Boolean);
+    if (!userDeviceCodes.length) return { message: 'No valid device found for user' };
     const deviceInfoRes = await axios.get(`${this.cloudUrl}/hr/device/code?code=${userDeviceCodes.join(',')}`);
     const deviceInfo = deviceInfoRes.data;
     const unreachableDevices = [];
@@ -237,7 +240,10 @@ export class DahuaMachineService implements AttendanceMachineStrategy {
         idRecordMap[deviceCode] = id;
       }
     });
-    const userDeviceCodes = identification.map(e => e?.remark?.split('/')[1]);
+    const userDeviceCodes = identification
+      .map(e => e?.remark?.split('/')[1])
+      .filter(Boolean);
+    if (!userDeviceCodes.length) throw new HttpException('User has no valid device assigned!', HttpStatus.NOT_FOUND);
     const deviceInfoRes = await axios.get(`${this.cloudUrl}/hr/device/code?code=${userDeviceCodes.join(',')}`);
     const deviceInfo = deviceInfoRes.data;
     const unreachableDevices = [];
@@ -287,13 +293,22 @@ export class DahuaMachineService implements AttendanceMachineStrategy {
       const machineName = machine.name || machine.code || machine.ip;
       console.log(`\n--- [Dahua] Machine: ${machineName} (IP: ${machine.ip}, Code: ${machine.code}) ---`);
 
+      // 1. First check if machine is reachable with 3s timeout
+      const isConnected = await this.checkDahuaConnection(machine.ip, 3000);
+      if (!isConnected) {
+        console.warn(`[Dahua] ⚠️ Machine ${machineName} (${machine.ip}) is offline / unreachable. Skipping.`);
+        unreachableDevices.push(machine.ip);
+        continue;
+      }
+
+      // 2. Only if connected, fetch DB filter time and device clock
       const time_stamp = await this.cloudAttendanceService.getLastAttendanceUnix(machine.code);
       const timeFormatted = time_stamp 
         ? `${time_stamp} (ISO: ${new Date(time_stamp * 1000).toISOString()})` 
         : 'None (fetching all available logs)';
       console.log(`[Dahua] Filter StartTime from DB: ${timeFormatted}`);
 
-      const deviceTime = await this.getDahuaCurrentTime(machine.ip);
+      const deviceTime = await this.getDahuaCurrentTime(machine.ip, 3000);
       if (deviceTime) {
         console.log(`[Dahua] Device internal clock: ${deviceTime}`);
       }
@@ -303,7 +318,7 @@ export class DahuaMachineService implements AttendanceMachineStrategy {
         if (time_stamp) log_url += `&StartTime=${time_stamp}`;
         console.log(`[Dahua] Request URL: ${log_url}`);
 
-        const response = await client.get(log_url, { httpsAgent });
+        const response = await client.get(log_url, { httpsAgent, timeout: 10000 });
         const rawData = response.data || '';
         const parsedResult = this.parseDahuaResponse(rawData);
 
@@ -325,7 +340,7 @@ export class DahuaMachineService implements AttendanceMachineStrategy {
         final_result.push(...result.map(e => ({ ...e, machineId: machine.code })));
       } else {
         unreachableDevices.push(machine.ip);
-        console.warn(`[Dahua] ❌ Machine ${machineName} (${machine.ip}) was unreachable or failed to return logs.`);
+        console.warn(`[Dahua] ❌ Machine ${machineName} (${machine.ip}) failed to return logs.`);
       }
     }
 

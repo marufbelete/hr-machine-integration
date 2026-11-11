@@ -5,7 +5,9 @@ const INTERNAL_API_SECRET = "MisomeInternal_123Trqtwref&2536";
 const INTERNAL_API_AUD = "express-service";
 const INTERNAL_API_ISS = "nest-service";
 
-const http = axios.create();
+const http = axios.create({
+  timeout: 15000,
+});
 
 http.interceptors.request.use((config) => {
   const token = jwt.sign({ iss: INTERNAL_API_ISS }, INTERNAL_API_SECRET, {

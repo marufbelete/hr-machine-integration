@@ -237,13 +237,13 @@ export class BotService implements OnApplicationBootstrap {
 
             await axios.put(`${this.CLOUD_URL}/sync`,{
               code: syn.id,
-              error: JSON.stringify(error?.response?.message || 'Unknown error')
+              error: JSON.stringify(error?.response?.data || error?.message || 'Unknown error')
           }, {
             headers: {
               'X-From-Sync': 'true',
             },
           });
-            console.error(`Error processing cloud data:`, error);
+            console.error(`[CLOUD_HR_SYNC] ❌ Error processing user sync (${syn.method} ${syn.unique_code}):`, error?.response?.data || error?.message || error);
           }
         }
       }
